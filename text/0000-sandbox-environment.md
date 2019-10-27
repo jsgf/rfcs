@@ -122,23 +122,20 @@ The primary cost is additional complexity in invoking `rustc` itself, and additi
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-Rust has a couple of mechanisms for compile-time configuration:
-- It has the `--cfg` options which set flags which can be tested with compile-time predicates. These are strictly
-  binary choices, which allow for conditional complilation.
-- It has the process environment which can be queried at compile-time with `env!()` which evaluate to an
-  arbitrary compile-time `&'static str` constant, which cannot be directly used for conditional compilation.
-  The environment is not directly set via command-line options, but via another mechanism.
+One alternative would be to simply do nothing, and leave things as-is.
 
-This mechanism doesn't change the semantics of either mechanism, but it does make the environment a little more like
-a C preprocessor macro - they can be precisely set on the command line, and if desired, only via the command line.
-
-One alternative would be to simply do nothing, and leave things as-is. To achieve similar functionality to this change,
-any build system invoking `rustc` would need to provide a mechanism to precisely control the process environment, either
-by removing or overriding variables. However, it would still be strictly less capable, as it would not be able to override
-variables needed by:
-- `rustc` itself to run - such as `LD_PRELOAD` or `LD_LIBRARY_PATH`
+In a Unix/Linux-like system, the environment can be controlled either with the shell, or the `env` command. However
+this requires `rustc` to be invoked via a shell or the `env` command, which may not be convenient for a given build
+system. Alternatively, the buildsystem itself could be modified to suitably configure the environment.
+However, it would still be strictly less capable, as it would not be able to override
+variables or remove needed by:
+- `rustc` itself to run - such as `HOME`, `LD_PRELOAD` or `LD_LIBRARY_PATH`
 - `rustc` to invoke the linker, such as `PATH`
 - the linker for its own operation (`PATH`, and so on)
+
+This can be particularly awkward when it isn't clear which variables are needed by the toolchain - for example,
+invoking `rustc` via `rustup` uses a wider range of variables than directly invoking the `rustc` binary without
+an intermediary.
 
 This proposal gives maximal control when needed, without changing the default behaviours at all.
 
@@ -153,6 +150,17 @@ to arbitrary values via the `-D` option. This is logically equivalent to both of
 These macros are explicit on the command-line, so they're easy to take into account as an input to the
 compilation process. And the tools driving the C compiler don't need any addition way to control the
 process environment.
+
+Rust has a couple of mechanisms for compile-time configuration:
+- It has the `--cfg` options which set flags which can be tested with compile-time predicates. These are strictly
+  binary choices, which allow for conditional complilation.
+- It has the process environment which can be queried at compile-time with `env!()` which evaluate to an
+  arbitrary compile-time `&'static str` constant, which cannot be directly used for conditional compilation.
+  The environment is not directly set via command-line options, but via another mechanism.
+
+This mechanism doesn't change the semantics of either mechanism, but it does make the environment a little more like
+a C preprocessor macro - they can be precisely set on the command line, and if desired, only via the command line.
+
 
 In general build systems need to have a precise knowledge of all inputs used to build a particular artifact.
 This is especially important when trying to implement fully reproducable builds, either for auditability reasons
