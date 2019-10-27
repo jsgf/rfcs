@@ -196,6 +196,6 @@ system).
 
 More generally, bounding the amount of state available to the compiler outside of the sources and command-line options
 is important to get good determinstic builds. Another source of currently unconstraint non-determinism is procedural
-macros. I've [previously proposed](https://internals.rust-lang.org/t/pre-rfc-procmacros-implemented-in-wasm/10860
+macros. I've [previously proposed](https://internals.rust-lang.org/t/pre-rfc-procmacros-implemented-in-wasm/10860)
 compiling them into Web Assembly and running them within a wasm sandbox within `rustc`;
 David Tolnay has [prototyped this in `watt`](https://github.com/dtolnay/watt/).
