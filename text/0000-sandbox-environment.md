@@ -139,6 +139,9 @@ an intermediary.
 
 This proposal gives maximal control when needed, without changing the default behaviours at all.
 
+When `rustc` is embedded or long-running, such as in `rls` or `rust-analyzer`, then its necessary to explicitly
+set the logical environment for each crate, rather than just inheriting the process environment.
+
 # Prior art
 [prior-art]: #prior-art
 
