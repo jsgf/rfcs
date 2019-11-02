@@ -37,29 +37,29 @@ Rust implements the `env!()` and `option_env!()` macros to access the process en
 
 By default all environment variables are available with their value taken from the environment. There are several
 additional controls to control the logical environment accessed by `env!()`/`option_env!()`:
-- only allow access to a specific whitelist of variables
+- only allow access to a specific set of variables
 - override specific variables to other values
 - add new variables without them being present in the environment
 
 These options are:
-- `--env-whitelist REGEX` - match the REGEX against all existing process environment
-  variables and allow them to be seen. This overrides `--env-remove-all`. The regex is matched against the entire variable name
+- `--env-allow REGEX` - match the REGEX against all existing process environment
+  variables and allow them to be seen. The regex is matched against the entire variable name
   (that is, it is anchored).
-- `--env-blacklist REGEX` - match the REGEX against the environment and remove those variables from the logical environment; this
+- `--env-deny REGEX` - match the REGEX against the environment and remove those variables from the logical environment; this
   is equivalent to unsetting them from the Rust code's perspective.
 - `--env-set VAR=VALUE` - set the logical value of an environment variable. This will override the value if it already exists
   in the process environment, or create a new logical environment variable.
 
 These options are processed in order. For example:
 ```
-rustc --env-blacklist '.*' --env-whitelist 'CARGO_.*' --env-set HOME=/home/system [...]
+rustc --env-deny '.*' --env-allow 'CARGO_.*' --env-set HOME=/home/system [...]
 ```
 will clean all environment variables from the logical environment. It then allows access to all Cargo-set variables, and overrides
 the value of `$HOME`.
 
 Note that these options act on the logical environment, so:
 ```
-rustc --env-set FOO=BAR --env-blacklist FOO
+rustc --env-set FOO=BAR --env-deny FOO
 ```
 will leave `FOO` unset.
 
@@ -67,8 +67,8 @@ will leave `FOO` unset.
 [reference-level-explanation]: #reference-level-explanation
 
 The implementation of this RFC introduces the notion of a logical environment which is accessed by the `env!`/`option_env!` macros,
-distinct from the actual process environment. By default they are the same, but the additions of the `--env-whitelist`,
-`--env-blacklist` and `--env-set` options allow the logical environment to be tailored as desired.
+distinct from the actual process environment. By default they are the same, but the additions of the `--env-allow`,
+`--env-deny` and `--env-set` options allow the logical environment to be tailored as desired.
 
 ## Processing of the options
 
@@ -76,14 +76,14 @@ The `--env-` options are processed in the order they appear on the command-line,
 initialized from the process environment. Then each each `--env` option is processed in turn, as it appears, to update the logical
 environment. Specifically:
 
-- `--env-whitelist REGEX` - Any name which doesn't match the REGEX is removed from the logical environment,
-  as if it had never been set. This is symmetric with `--env-blacklist`.
-- `--env-blacklist REGEX` - Any name which does match the REGEX is removed from the logical environment, as if it had never
-  been set. This is symmetric with `--env-whitelist`.
+- `--env-allow REGEX` - Any name which doesn't match the REGEX is removed from the logical environment,
+  as if it had never been set. This is symmetric with `--env-deny`.
+- `--env-deny REGEX` - Any name which does match the REGEX is removed from the logical environment, as if it had never
+  been set. This is symmetric with `--env-allow`.
 - `--env-set VAR=VALUE` - Set a logical environment variable with the given value. This either sets a new variable, or
   overrides an existing variable's value.
 
-Note that `--env-whitelist` and `--env-blacklist` affect variables set with previous `--env-set` options, possibly removing them.
+Note that `--env-allow` and `--env-deny` affect variables set with previous `--env-set` options, possibly removing them.
 
 If there are no `--env-` options then the logical environment is left in its initial state, which is identical to the process
 environment.
@@ -117,7 +117,7 @@ it could constrain the accessible variables to:
 
 The primary cost is additional complexity in invoking `rustc` itself, and additional complexity in documenting
 `env!`/`option_env!`. Procedual macros would need to be changed to access the logical environment, either by
-
+adding new environment access APIs, or overriding the implementation of `std::env::var` (etc) for procmacros.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
