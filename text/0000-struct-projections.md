@@ -27,6 +27,36 @@ of a structure's public API. It is a generalization of partial moves and borrowi
 (Preliminary syntax for explanation only: 
 `#[projection(...)]` and `@projection`)
 
+
+```rust
+#[projection(position)]
+#[projection(direction)]
+#[projection(speed)]
+#[projection(velocity: speed + direction)]
+struct Player {
+    #[projection(position)]
+    position: (f32, f32),
+    #[projection(direction)]
+    direction: f32,
+    #[projection(speed)]
+    speed: f32,
+}
+
+impl Player {
+    #[projection(speed)]
+    pub fn speed(&self) -> &@speed f32 { ... }
+
+    #[projection(direction)]
+    pub fn direction(&self) -> & @direction f32 { ... }
+
+    #[projection(velocity)]
+    pub fn velocity(&self) -> (f32, f32) { ... }
+
+    #[projection(position, velocity)]
+    pub fn update_pos(&mut @position self) { ... }
+}
+```
+
 Explain the proposal as if it was already included in the language and you were teaching it to another Rust programmer. That generally means:
 
 - Introducing new named concepts.
