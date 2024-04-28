@@ -40,6 +40,8 @@ struct Player {
     direction: f32,
     #[projection(speed)]
     speed: f32,
+    #[projection(velocity)]
+    _velocity: (), // TODO: need to tie all projections to actual fields?
 }
 
 impl Player {
@@ -56,6 +58,169 @@ impl Player {
     pub fn update_pos(&mut @position self) { ... }
 }
 ```
+
+A type's API interface consists of a number of different elements, such as its
+visible fields, intrinsic and trait implementations, associated constants and so
+on. In addition to these it may also have a set of "projections". These are a
+description of pieces of independent state a structure may contain, which can be
+treated almost as if they were actual fields with partial borrowing or moving.
+
+For example, this structure defines independent position and velocity projections:
+```rust
+#[projection(position)]
+#[projection(velocity)]
+struct Player {
+  #[projection(position)]
+  position: (f32, f32),
+  #[projection(velocity)]
+  velocity: (f32, f32)
+}
+```
+
+The initial `projection` attributes on the `struct` define `position` and `velocity`
+projections as parts of the `Player` structure's API. They tell the user of this
+type that they exist as independent state, but without committing to any
+particular implementation.
+
+The `projection` attributes on each field tie each of those fields to the
+particular projection for use by implementations. For example:
+
+```rust
+impl Player {
+  #[projection(position)]
+  fn get_position(&self) -> (f32, f32) { self.position }
+}
+```
+
+This means that the `get_position` method acts on the `position` projection.
+This means 1) it may only access fields which are part of that projection, and 2
+in order to call it the `position` projection must be availabe for borrowing
+(with `&self`) - it, it must not have been moved or be exclusively borrowed.
+(See below for more details.)
+
+An alternative method:
+```rust
+#[projection(position)]
+pub fn get_position_ref(&self) -> &(f32, f32) { &self.position }
+```
+returns a reference. This reference is specifically a reference to the
+`position` projection of the structure. Desugared it looks like:
+```rust
+#[projection(position)]
+pub fn get_position_ref<'a>(&'a @position self) -> &'a @position (f32, f32) { &self.position }
+```
+
+If we had a corresponding:
+```rust
+#[projection(position)]
+pub fn get_position_mut(&mut self) -> &mut (f32, f32) { &mut self.position }
+```
+
+and the caller:
+```rust
+  let pos = player.get_position_ref(); // OK: Shared borrow of `position` projection
+  let pos_mut = player.get_position_mut(); // BAD: `pos` is already a shared borrow of `position` projection
+```
+
+but if we also have
+```rust
+#[projection(velocity)]
+pub fn get_velocity(&self) -> (f32, f32) { self.velocity }
+```
+then this would be fine:
+```rust
+  let pos_mut = player.get_position_mut(); // OK: exclusive borrow of `position`
+  let vel = player.get_velocity(); // OK: `velocity` projection independent of `position
+```
+
+We said above that the projections are part of the interface, but don't
+constrain the implementation. For example, we could change `Player` with:
+```rust
+#[projection(position)]
+#[projection(velocity)]
+struct Player {
+  #[projection(position)]
+  position: (f32, f32),
+  #[projection(velocity)]
+  speed: f32,
+  #[projection(velocity)]
+  direction: f32,
+}
+
+impl Player {
+  #[projection(velocity)]
+  pub fn get_velocity(&self) -> (f32, f32) { ... }
+  #[projection(velocity)]
+  pub fn get_speed_mut(&mut self) -> f32 { &mut speed }
+}
+```
+
+This presents almost the same API as before, except we're also exposing the speed via `get_speed_mut`.
+```rust
+  let speed_mut = player.get_speed_mut(); // OK: got an exclusive reference to `velocity` projection
+  let get_velocity = player.get_velocity(); // BAD: `velocity` already borrowed exclusively
+```
+
+We can also factor the `speed` and `direction` fields as their own projections
+while still keeping `velocity`:
+
+```rust
+#[projection(position)]
+#[projection(speed)]
+#[projection(direction)]
+#[projection(velocity: speed + direction)]
+struct Player {
+  #[projection(position)]
+  position: (f32, f32),
+  #[projection(speed)]
+  speed: f32,
+  #[projection(direction)]
+  direction: f32,
+  // XXX need a velocity placeholder field?
+}
+
+impl Player {
+  #[projection(velocity)]
+  pub fn get_velocity(&self) -> (f32, f32) { ... }
+  #[projection(speed)]
+  pub fn get_speed_mut(&mut self) -> f32 { &mut speed }
+}
+```
+
+From a user's perspective, `location` and `velocity` projections still exist,
+but the implementation has changed to use a polar (speed and direction)
+representation. We've also added `speed` and `direction` projections to expose
+this. (Note that adding projections should be backwards compatible, but removing
+them isn't.)
+
+The result is that a method acting on the `velocity` projection must have access
+to both the speed and direction projections. For example:
+```rust
+  let speed_mut = player.get_speed_mut(); // OK: got an exclusive reference to `speed` projection
+  let get_velocity = player.get_velocity(); // BAD: `velocity` not available because component `speed` is already borrowed
+```
+
+All structures have the default `ALL` projection, which includes all other
+projections. Any method which doesn't have an explicit projection attribute is
+taken as `ALL`. This is consistent with Rust before projections, where, say, a
+`&self` parameter was taken to borrow the entire structure.
+
+## Projections from fields
+
+A structure may want to expose a projection from one of its own field's structures. For example:
+```rust
+#[projection(position)]
+#[projection(velocity)]
+struct Player {
+  #[projection(position = Entity::position)]
+  #[projection(velocity = Entity::velocity)]
+  entity: Entity
+}
+```
+
+## Projections across APIs
+
+Each 
 
 Explain the proposal as if it was already included in the language and you were teaching it to another Rust programmer. That generally means:
 
