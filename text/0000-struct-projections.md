@@ -218,9 +218,30 @@ struct Player {
 }
 ```
 
+## Projection sets
+
+The `@projection` syntax is a special case of a more general syntax of the form `@(set_expression)`:
+```bnf
+set_expression ::= "(" set_expression ")"
+                | set_expression + set_expression
+                | set_expression - set_expression
+                | projection_name
+```
+
+The parentheses are needed if the set_expression is anything other than a
+literal projection name.
+
+This means you can express a negative expression such as `@(ALL - velocity)` to
+express a Player structure which has no velocity.
+
 ## Projections across APIs
 
-Each 
+Projection annotations need not be tied to intrinsic methods. For example:
+```
+fn do_something_to_player(player: & @velocity Player) -> & @speed f32 { ... }
+```
+
+The projections are tied to the lifetimes of the references.
 
 Explain the proposal as if it was already included in the language and you were teaching it to another Rust programmer. That generally means:
 
