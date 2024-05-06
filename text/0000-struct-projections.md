@@ -12,14 +12,40 @@ of a structure's public API. It is a generalization of partial moves and borrowi
 # Motivation
 [motivation]: #motivation
 
-- partial borrows and moves are very useful
-- in practice only usable when directly manipulating struct fields
-- methods not supported because `self`/`&self` always moves/borrows entire structure
-- projections provide a way to
-  - define logical "sub structures"
-  - given them names
-  - define relationships between them
-  - expose them via API
+It's very useful to be able to bundle several pieces of semi-independent data
+together in a single structure. For example, you might have a `Player` structure
+representing the player character in a game, which holds the players position,
+velocity, inventory, health and other parameters. Generally inspecting the
+inventory is not affected by the player's position, so you should be able to do
+it even if the position is currently borrowed exclusively.
+
+Similarly in embedded systems, it's common to represent all the available
+hardware devices as a single structure; the individual devices are often
+completely independent however. Different parts of the program use different
+devices, so they use the separate parts of the structure independently.
+
+Rust currently supports such operations via "partial borrows" and "partial
+moves". It can track access to the fields of a structure independently, so a
+borrow or move of one field does not prevent another field from being mutated.
+
+However, this only works when directly accessing the fields. Once you try to do
+this via a method, the reciever (`&self`/`&mut self`/`self`) will attempt to
+borrow/move the entire structure, and fail if this is not possible.
+
+This severely limits the usefulness of partial borrows/moves.
+
+This RFC proposes a mechanism to generalize partial borrows/moves to allow
+struct impls to act on logical subsets of the state encoded in a structure. It
+does this by introducing the notion of a "projection" which is a way to name a
+subset of the state. Methods are labelled with which projection they operate on,
+and are only allowed to access fields from the corresponding projection. 
+
+Projections are part of the API signatures for the type, but don't dictate a
+specific implementation. The goal is that projections reflect semantically
+meaningful aspects of the API rather than be a direct reflection of the
+implementation. For example, `Player` may have a `velocity` projection, but that
+doesn't mean it necessarily has a `velocity` field - it could be synthesizing it
+from `speed` and `direction`.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
@@ -241,84 +267,179 @@ Projection annotations need not be tied to intrinsic methods. For example:
 fn do_something_to_player(player: & @velocity Player) -> & @speed f32 { ... }
 ```
 
-The projections are tied to the lifetimes of the references.
+The projections are tied to the lifetimes of the references. For example, given
+a function with the signature:
+```rust
+fn get_position_ref(player: & @position Player) -> &(f32, f32) { ... }
+```
+Since this is using lifetime elision, the lifetime of the `player` parameter is
+inferred for the return value. The projection `position` is attached to a
+`Player` reference, so its inferred to be `Player::position`. As a result the
+return reference is `& '1 @Player::position (f32, f32)` (using `'1` for the
+elided lifetime).
 
-Explain the proposal as if it was already included in the language and you were teaching it to another Rust programmer. That generally means:
+## Moved projections
 
-- Introducing new named concepts.
-- Explaining the feature largely in terms of examples.
-- Explaining how Rust programmers should *think* about the feature, and how it should impact the way they use Rust. It should explain the impact as concretely as possible.
-- If applicable, provide sample error messages, deprecation warnings, or migration guidance.
-- If applicable, describe the differences between teaching this to existing Rust programmers and new Rust programmers.
-- Discuss how this impacts the ability to read, understand, and maintain Rust code. Code is read and modified far more often than written; will the proposed feature make code easier to maintain?
+TBD
 
-For implementation-oriented RFCs (e.g. for compiler internals), this section should focus on how compiler contributors should think about the change, and give examples of its concrete impact. For policy RFCs, this section should provide an example-driven introduction to the policy, and explain its impact in concrete terms.
+- a function taking a structure by value (eg `self` or other non-reference
+  parameter) can specify it only needs specific projections to be present.
+- A return by value (`Self`) can specify which projections are present
+- Code within the method can assign to non-present fields like initialization
+
+## Projections and Traits
+
+A trait implementation for a type can be over a projection. For example:
+```rust
+#[projection(position, velocity)]
+impl Move for Player {
+  fn move(&mut self);
+}
+```
+
+means that calling `<Player as Move>::move` only interacts with the `position`
+and `velocity` projections. The `&mut self` receiver is treated as `&mut
+@(position + velocity) self`.
+
+However, because trait objects erase the underlying type, they also erase the
+projections. Therefore coercing a `&mut Player` to `&mut dyn Move` is an
+operation on `&mut @all Player`. This means that the coercion fails if there are
+any outstanding borrowed or moved projections on the object.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+TBD
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- Corner cases are dissected by example.
+- projections are named, all structures have an `all` projection which covers
+  the whole thing; all other projections are a subset of this
+- References are bound to a projection. Projections are attached to lifetimes (named or elided)
+- Also owned objects are labelled with a set of present/missing projections for partial moves
+- Existing partial move/borrows are reimplemented in terms of projections
+  (basically a projection per field with an internal name)
+- subtyping relationship between different projections
 
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
-
+Projection naming:
+- Canonical name is path::of::type::projection
+  - This makes them have the same form as field names. Are they in the same
+    namespace or not? I can see it being useful to be able to give a projection
+    and a field the same name, so different namespaces. It could be confusing
+    though, like traits and their types.
+  - How to name the projection of a specific field (eg for "re-exporting" a
+    projection from an inner type). Referencing a field name would make more
+    sense than type (since there could be multiple fields with the same type,
+    and you want re-project state from just one of them)
+  - 
 # Drawbacks
 [drawbacks]: #drawbacks
 
 Why should we *not* do this?
 
+- Complex addition to the language
+- Does it cohere with the rest of the language?
+- Can this be approximated with existing language facilities?
+- Can it be implemented effectively in a library (eg Bevy ECS)?
+
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-- Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not choosing them?
-- What is the impact of not doing this?
-- If this is a language proposal, could this be done in a library or macro instead? Does the proposed change make Rust code easier or harder to read, understand, and maintain?
+## Traits as projections
+
+The set relationship between projections is reminiscent of how traits are
+defined: it's common to use a collection of narrowly scoped traits to expose
+specific aspects of a more complex type.
+
+This raises the possibility that one could use traits as the direct
+representation of a projection, rather than having to define a whole new
+language concept.
+
+However, I think this runs aground when considering how it must interact with
+the borrow checker. In this design, references are augmented with the set of
+projections being borrowed by the reference. I don't see any way of doing that
+with a trait-related mechanism.
 
 # Prior art
 [prior-art]: #prior-art
 
-Discuss prior art, both the good and the bad, in relation to this proposal.
-A few examples of what this can include are:
+## View types
 
-- For language, library, cargo, tools, and compiler proposals: Does this feature exist in other programming languages and what experience have their community had?
-- For community proposals: Is this done by some other community and what were their experiences with it?
-- For other teams: What lessons can we learn from what other communities have done here?
-- Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
+[Niko](https://smallcultfollowing.com/babysteps/blog/2021/11/05/view-types/)
+discusses this problem and proposes "view types". I think this key distinction
+between view types and this proposal is that projections are not directly tied
+to field names. Directly referencing field names in the API of a type means that
+it's very coupled to internal implementation details.
 
-This section is intended to encourage you as an author to think about the lessons from other languages, provide readers of your RFC with a fuller picture.
-If there is no prior art, that is fine - your ideas are interesting to us whether they are brand new or if it is an adaptation from other languages.
+The `&{project,...} something` syntax is probably worth considering though.
 
-Note that while precedent set by other languages is some motivation, it does not on its own motivate an RFC.
-Please also take into consideration that rust sometimes intentionally diverges from common language features.
+
+Also [this
+post](https://internals.rust-lang.org/t/notes-on-partial-borrows/20020) is an
+interesting summary of the field and proposal. It uses `&<...>` syntax for
+viewed references; I'm not sure if this is more or less ambiguous than `{}`.
+
+## Structural inheritance
+
+In some ways this is similar to a structural subclassing mechanism. For example
+the `Player` example might be implemented in C++ with:
+```c++
+class Speed { ... };
+class Direction { ... };
+class Velocity: public Speed, public Direction { ... };
+class Inventory { ... };
+class Player: public Velocity, public Inventory { ... };
+```
+
+But this is much more limited - fundamentally projections are a "has-a"
+relationship rather than an "is-a" relationship.
+
+
+## Bevy's ECS mechanisms
+
+Bevy implements an elaborate system for disaggregating state via it's
+Entity/Component/System (ECS) mechanism. An "entity" is more or less equivalent
+to a projection, in that it represents a specific piece of state. These are
+logically grouped into "components" to form an aggregate bundle of state, which
+are then operated on by systems. 
+
+In order to support this, it implements an elaborate query mechanism, partially
+implemented at compile time, partially at runtime. This allows a piece of code
+to specify which specific pieces of state it wants to operate on (shared or
+exclusively) and the runtime makes sure that everything is sequenced
+appropriately.
+
+This mechanism requires the whole program to conform to this design, which means
+its very hard to retrofit into an existing design. It's also not appropriate for
+embedded systems (it requires an allocator, threading, and a lot more).
+
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
+- This currently focuses on `struct`s. Could it be extended to cover other
+  aggregate types? What is partial borrow/move currently supported on?
+- How does it this interact/relate with pin projections? Could they be
+  implemented in terms of this?
+- The idea of attaching a set of projections to a reference is similar to Niko's
+  view types?
+- This attempts to cover partial borrows and moves. Moves are raise their own
+  set of tricky questions - should they be separated and handled once borrows are worked out?
+  Specific issues:
+  - How does one indicate a move?
+  - How do you indicate a partial `self`?
+  - If a method requires a partial `self`, but the object passed in isn't
+    partial, is that a compile time error? The extra fields are Dropped as part
+    of the call? (I think they have to be unless we want in-struct drop flags
+    again)
+  - Does this handle re-populating moved fields?
+- Syntax:
+  - The attribute syntax isn't awful to start with
+  - But I'm really unsure about a sigil-based approach for annotating references
+  - And see the partial-move questions above
+- What other things would this enable? Does it solve more problems?
+
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-Think about what the natural extension and evolution of your proposal would
-be and how it would affect the language and project as a whole in a holistic
-way. Try to use this section as a tool to more fully consider all possible
-interactions with the project and language in your proposal.
-Also consider how this all fits into the roadmap for the project
-and of the relevant sub-team.
-
-This is also a good place to "dump ideas", if they are out of scope for the
-RFC you are writing but otherwise related.
-
-If you have tried and cannot think of any future possibilities,
-you may simply state that you cannot think of anything.
-
-Note that having something written down in the future-possibilities section
-is not a reason to accept the current or a future RFC; such notes should be
-in the section on motivation or rationale in this or subsequent RFCs.
-The section merely provides additional information.
+- Some way of extending it to trait objects
+- Extending to partial moves if we defer them
